@@ -308,6 +308,7 @@ function isPointInPolygon(x, y, polygon, selectedArrowInfo) {
 
       const hasSufficientOverlap = pointsInside > 0 && (overlapDistance >= 15 || pointsInside > 3);
       const isSuccess = hasSufficientOverlap && directionCorrect;
+      console.log('hasSufficientOverlap === ', hasSufficientOverlap)
       console.log('isSuccess === ', isSuccess)
 
       return isSuccess;
@@ -336,6 +337,117 @@ function isPointInAnyPolygon(x, y, correctGrid) {
   return correctGrid.some(polygon => isPointInPolygon(x, y, polygon));
 }
 
+function isPointInPolygonArrow(x, y, polygon, selectedArrowInfo) {
+  // Flatten the polygon array if it is passed in as a nested array [[...]]
+  if (polygon && Array.isArray(polygon[0]) && !('x' in polygon[0])) {
+      polygon = polygon[0];
+  }
+
+  // ARRAY MODE: We are validating/solving a full trace
+  if (Array.isArray(x)) {
+      console.log('--- NEW TRACE VALIDATION ---');
+      console.log('selectedArrowInfo ===', selectedArrowInfo);
+
+      const trace = x;
+      if (trace.length === 0 || !polygon || polygon.length === 0) {
+          return false;
+      }
+
+      let pointsInside = 0;
+      let firstInside = null;
+      let lastInside = null;
+      const filteredInsidePoints = [];
+
+      // Re-use standard point-in-polygon check for each point in the trace
+      // (This triggers the POINT MODE logic below silently)
+      for (const point of trace) {
+          if (isPointInPolygon(point.x, point.y, polygon, null)) { // Pass null to avoid prop drilling if not needed
+              pointsInside++;
+              filteredInsidePoints.push(point);
+              if (!firstInside) firstInside = point;
+              lastInside = point;
+          }
+      }
+
+      let overlapDistance = 0;
+      if (firstInside && lastInside) {
+          overlapDistance = Math.hypot(lastInside.x - firstInside.x, lastInside.y - firstInside.y);
+      }
+
+      let directionCorrect = true;
+
+      if (filteredInsidePoints.length > 1 && selectedArrowInfo) {
+          const startPt = filteredInsidePoints[0];
+          const endPt = filteredInsidePoints[filteredInsidePoints.length - 1];
+
+          const traceDx = endPt.x - startPt.x;
+          const traceDy = endPt.y - startPt.y;
+          const traceLength = Math.hypot(traceDx, traceDy);
+
+          const expectedDx = Math.cos(selectedArrowInfo.rotation);
+          const expectedDy = Math.sin(selectedArrowInfo.rotation);
+
+          const traceUnitDx = traceDx / (traceLength || 1);
+          const traceUnitDy = traceDy / (traceLength || 1);
+
+          const dotProductUnit = traceUnitDx * expectedDx + traceUnitDy * expectedDy;
+
+          // Our updated bidirectional check
+          if (Math.abs(dotProductUnit) < 0.866) {
+              directionCorrect = false;
+          } else {
+              let parallelSegments = 0;
+              let totalSegments = 0;
+              const step = Math.max(1, Math.floor(filteredInsidePoints.length / 5));
+
+              for (let i = 0; i < filteredInsidePoints.length - step; i += step) {
+                  const pt1 = filteredInsidePoints[i];
+                  const pt2 = filteredInsidePoints[i + step];
+                  const dx = pt2.x - pt1.x;
+                  const dy = pt2.y - pt1.y;
+                  const len = Math.hypot(dx, dy);
+                  if (len > 2) {
+                      const segmentDot = (dx / len) * expectedDx + (dy / len) * expectedDy;
+                      if (Math.abs(segmentDot) >= 0.75) {
+                          parallelSegments++;
+                      }
+                      totalSegments++;
+                  }
+              }
+              if (totalSegments > 0 && (parallelSegments / totalSegments) < 0.6) {
+                  directionCorrect = false;
+              }
+          }
+      } else {
+          directionCorrect = false;
+      }
+
+      const hasSufficientOverlap = pointsInside > 0 && (overlapDistance >= 15 || pointsInside > 3);
+      const isSuccess = hasSufficientOverlap && directionCorrect;
+
+      // THIS is the log you actually want to see
+      console.log('Final Gesture Result ===', isSuccess); 
+      return isSuccess;
+  }
+
+  // POINT MODE: Standard point-in-polygon logic (Runs silently for each coordinate)
+  let inside = false;
+  const n = polygon.length;
+
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = polygon[i].x,
+          yi = polygon[i].y;
+      const xj = polygon[j].x,
+          yj = polygon[j].y;
+
+      const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+
+      if (intersect) inside = !inside;
+  }
+  
+  return inside;
+}
+
 function validateTrace(trace, correctGrid, selectedArrowInfo) {
   const pointsToValidate = trace;
   if (pointsToValidate.length === 0 || correctGrid.length === 0 || correctGrid[0].length === 0) {
@@ -344,14 +456,14 @@ function validateTrace(trace, correctGrid, selectedArrowInfo) {
   const polygon = correctGrid[0];
   let pointsInside = 0;
   for (const point of pointsToValidate) {
-    if (isPointInPolygon(point.x, point.y, polygon, selectedArrowInfo)) {
+    if (isPointInPolygonArrow(point.x, point.y, polygon, selectedArrowInfo)) {
       pointsInside++;
     }
   }
   console.log('pointsInside', pointsInside);
   console.log('pointsToValidate === ', pointsToValidate.length);
   const coverage = (pointsInside / pointsToValidate.length) * 100;
-  const threshold = 50;
+  const threshold = 10;
   return coverage >= threshold;
 }
 
